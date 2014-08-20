@@ -1,0 +1,8 @@
+body { text-align: center; font-family: sans-serif; font-size: 12px; }
+body div { margin-top: 10px; margin-bottom: 10px; }
+h1 { font-size: 18px; }
+h2 { font-size: 14px; }
+h3 { font-size: 12px; }
+.noborder { border: 0; }
+.noscrolling { overflow: hide; }
+.tag, .tag a { font-size: 10px; color: #bbb; }
