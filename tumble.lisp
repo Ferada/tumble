@@ -3,46 +3,112 @@
 (defvar *timezone*)
 
 (defun configure ()
-  (setf *prologue* "<!DOCTYPE html>")
   (setf *attribute-quote-char* #\")
   (local-time::reread-timezone-repository)
   (setf *timezone* (find-timezone-by-location-name "Europe/London"))
   (enable-read-macros))
 
-(defun render-tumble-to-files (&optional (pathname #P"random.tumble"))
+(defun render-tumble-to-files (&key (pathname #P"random.tumble")
+                                    (base-url #U"http://tumble.macrolet.net/")
+                                    (feedp T))
   (let ((*default-timezone* *timezone*))
     (let* ((tumble (read-tumble-from-file pathname))
            (tags (iterate
                    (for entry in tumble)
                    (unioning (getf (cdr entry) :tags)))))
-      (render-tumble-to-file #P"index.html" tumble)
+      (let ((title (format-feed-title NIL)))
+        (render-tumble-to-html-file #P"index.html" #P"" base-url NIL title tumble)
+        (when feedp
+          (render-tumble-to-atom-file #P"index.atom" #P"" base-url base-url NIL title tumble)))
       (iterate
         (for tag in tags)
-        (render-tumble-to-file
-         (make-pathname :directory (list :relative "tags" (string-downcase tag))
-                        :name "index"
-                        :type "html")
-         (remove-if-not (lambda (entry)
-                          (member tag (getf (cdr entry) :tags)))
-                        tumble))))))
+        (for title = (format-feed-title tag))
+        (for relative = (list :relative "tags" (string-downcase tag)))
+        (for pathname = (make-pathname :directory relative))
+        (for base = #P"../../")
+        (for url = (merge-uris (copy-uri #U"." :parsed-path relative) base-url))
+        (for filtered-tumble = (remove-if-not
+                                (lambda (entry)
+                                  (member tag (getf (cdr entry) :tags)))
+                                tumble))
+        (render-tumble-to-html-file
+         (merge-pathnames #P"index.html" pathname)
+         base
+         url
+         tag
+         title
+         filtered-tumble)
+        (when feedp
+          (render-tumble-to-atom-file
+           (merge-pathnames #P"index.atom" pathname)
+           base
+           url
+           base-url
+           tag
+           title
+           filtered-tumble))))))
 
-(defun render-tumble-to-file (pathname tumble)
+(defun format-feed-title (tag)
+  (format NIL "~(~A~) feed" (or tag 'full)))
+
+(defun render-tumble-to-atom-file (pathname base url base-url name title tumble)
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
                           :direction :output
                           :if-does-not-exist :create
                           :if-exists :supersede)
-    (with-html-output (stream stream :prologue T)
+    (with-html-output (stream stream :prologue "<?xml version='1.0' encoding='utf-8'?>")
+      (:feed
+       :xmlns "http://www.w3.org/2005/Atom"
+       (:title "random stuff")
+       (:subtitle (str title))
+       (:link :href (merge-uris (file-namestring pathname) url) :rel "self")
+       (:link :href url)
+       (:id (str url))
+       (:updated (str (now)))
+       (:author
+        (:name "Olof-Joachim Frahm"))
+       (mapc (rcurry #'render-entry-to-atom pathname url base-url base stream) tumble)))
+    (terpri stream)))
+
+(defun render-entry-to-atom (entry pathname url base-url base stream)
+  (let ((body (cdr entry))
+        (type (car entry)))
+    (with-html-output (stream stream)
+      (:entry
+       (:link :type "text/html" :href url)
+       (:title (str (or (getf body :title) "Untitled")))
+       (:id (str (merge-uris (copy-uri #U"." :fragment (princ-to-string (getf body :id))) base-url)))
+       (:updated (str (getf body :date)))
+       (:content
+        :type "html"
+        (:xml . :base) base-url
+        (esc
+         (with-output-to-string (stream)
+           (render-entry-to-html
+            entry
+            (merge-pathnames (file-namestring pathname) base)
+            stream
+            :iframep NIL))))))))
+
+(defun render-tumble-to-html-file (pathname base url name title tumble)
+  (ensure-directories-exist pathname)
+  (with-open-file (stream pathname
+                          :direction :output
+                          :if-does-not-exist :create
+                          :if-exists :supersede)
+    (with-html-output (stream stream :prologue "<!DOCTYPE html>")
       (:html
        (:head
         (:title "random stuff")
         (:meta :charset "utf-8")
-        (:link :rel "stylesheet" :href #U"/default.css"))
+        (:link :rel "stylesheet" :href (merge-pathnames #P"default.css" base) :title "Default stylesheet")
+        (:link :rel "alternate" :href (merge-pathnames #P"index.atom" base) :type "application/atom+xml" :title title))
        (:body
         (:a :href #U"/" (:h1 "random stuff"))
         "おはよう。"
-        (mapc (rcurry #'render-entry stream) (mark-dates tumble)))))
-    (terpri)))
+        (mapc (rcurry #'render-entry-to-html base stream) (mark-dates tumble)))))
+    (terpri stream)))
 
 (defun mark-dates (tumble)
   (iterate
@@ -67,7 +133,7 @@
     (with result)
     (for form in-file pathname)
     (ecase (car form)
-      ((video image link)
+      ((video image link text)
        (push form result)))
     (finally (return result))))
 
@@ -93,18 +159,43 @@
        (merge-uris (copy-uri #U"." :parsed-path `(:relative ,(cdr (assoc 'v query)))
                                    :query (and (assoc 'list query)
                                                (print-query `((list . ,(cdr (assoc 'list query)))))))
-                   #U"https://www.youtube.com/embed/")))))
+                   #U"https://www.youtube.com/embed/")))
+    (vimeo
+     (merge-uris (copy-uri #U"." :parsed-path `(:relative ,(cadr (uri-parsed-path url))))
+                 #U"https://player.vimeo.com/video/"))))
 
-(defun render-entry (entry stream)
-  (let ((body (cdr entry)))
+(defun render-tags (entry base stream)
+  (awhen (getf (cdr entry) :tags)
+    (with-html-output (stream stream)
+      " "
+      (:span
+       :class "tag"
+       (htm "[")
+       (iterate
+         (for tag in it)
+         (unless (first-iteration-p)
+           (htm " "))
+         (let ((name (string-downcase tag)))
+           (htm (:a :href (merge-pathnames (make-pathname :directory (list :relative "tags" name)) base)
+                    (str name)))))
+       (htm "]")))))
+
+(defun render-entry-to-html (entry base stream &key (iframep T))
+  (let ((body (cdr entry))
+        (type (car entry)))
     (with-html-output (stream stream)
       (:div
-       (ecase (car entry)
+       :class "post"
+       (ecase type
          (link
           (htm
            (:a
             :href (getf body :url)
             (esc (getf body :title)))))
+         (text
+          (markdown (getf body :text) :stream stream)
+          (when (getf body :tags)
+            (htm (:p (render-tags entry base stream)))))
          (month
           (htm
            (:h2 (str (format-timestring NIL (caddr entry) :format '(:long-month " " :year))))))
@@ -122,39 +213,42 @@
           (let ((provider (getf body :provider))
                 (url (getf body :url))
                 (title (getf body :title)))
-            (ecase provider
-              (youtube
-               (htm
-                (:iframe
-                 :class "noborder"
-                 :width 560
-                 :height 315
-                 :src (or (getf body :embed)
-                          (prepare-embed-url provider url))
-                 (:a :href url (esc title)))))
-              (soundcloud
-               (htm
-                (:iframe
-                 :class "noborder noscrolling"
-                 :width 450
-                 :height 450
-                 :src (or (getf body :embed)
-                          (prepare-embed-url
-                           provider
-                           (getf body :url)))
-                 (:a :href url (esc title))))))
+            (flet ((url ()
+                     (htm (:a :href url (esc title)))))
+              (cond
+                ((not iframep)
+                 (url))
+                (T
+                 (ecase provider
+                   (youtube
+                    (htm
+                     (:iframe
+                      :class "noborder"
+                      :width 560
+                      :height 315
+                      :src (or (getf body :embed)
+                               (prepare-embed-url provider url))
+                      (url))))
+                   (vimeo
+                    (htm
+                     (:iframe
+                      :class "noborder"
+                      :width 560
+                      :height 239
+                      :src (or (getf body :embed)
+                               (prepare-embed-url provider url))
+                      (url))))
+                   (soundcloud
+                    (htm
+                     (:iframe
+                      :class "noborder noscrolling"
+                      :width 560
+                      :height 560
+                      :src (or (getf body :embed)
+                               (prepare-embed-url
+                                provider
+                                (getf body :url)))
+                      (url))))))))
             (htm (:br)))))
-       (awhen (getf body :tags)
-         (htm
-          " "
-          (:span
-           :class "tag"
-           (htm "[")
-           (iterate
-             (for tag in it)
-             (unless (first-iteration-p)
-               (htm " "))
-             (let ((name (string-downcase tag)))
-               (htm (:a :href (namestring (make-pathname :directory (list :absolute "tags" name)))
-                        (str name)))))
-           (htm "]"))))))))
+       (unless (eq type 'text)
+         (render-tags entry base stream))))))

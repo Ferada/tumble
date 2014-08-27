@@ -7,7 +7,7 @@
 
 (asdf:defsystem #:tumble
   #2+asdf-unicode :encoding :utf-8
-  :depends-on (#:closer-mop #:alexandria #:arnesi #:logv #:cl-who #:iterate #:local-time #:puri #:anaphora)
+  :depends-on (#:closer-mop #:alexandria #:arnesi #:logv #:cl-who #:iterate #:local-time #:puri #:anaphora #:cl-markdown)
   :serial T
   :components ((:file "package")
                (:file "tumble")))

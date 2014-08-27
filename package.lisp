@@ -3,4 +3,4 @@
 (in-package #:cl-user)
 
 (defpackage #:tumble
-  (:use #:cl #:cl-who #:iterate #:logv #:local-time #:puri #:alexandria #:split-sequence #:anaphora))
+  (:use #:cl #:cl-who #:iterate #:logv #:local-time #:puri #:alexandria #:split-sequence #:anaphora #:cl-markdown))
