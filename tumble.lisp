@@ -189,10 +189,13 @@
        :class "post"
        (ecase type
          (link
-          (htm
-           (:a
-            :href (getf body :url)
-            (esc (getf body :title)))))
+          (let ((url (princ-to-string (getf body :url))))
+            (htm
+             (:a
+              :href url
+              ;; TODO: esc should behave similarly to str in that it should
+              ;; accept arbitrary objects
+              (esc (or (getf body :title) url))))))
          (text
           (markdown (getf body :text) :stream stream)
           (when (getf body :tags)
