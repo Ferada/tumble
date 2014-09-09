@@ -6,7 +6,8 @@
   (setf *attribute-quote-char* #\")
   (local-time::reread-timezone-repository)
   (setf *timezone* (find-timezone-by-location-name "Europe/London"))
-  (enable-read-macros))
+  (enable-read-macros)
+  (let-over-lambda:|enable-#"-reader-syntax|))
 
 (defun render-tumble-to-files (&key (pathname #P"random.tumble")
                                     (base-url #U"http://tumble.macrolet.net/")
